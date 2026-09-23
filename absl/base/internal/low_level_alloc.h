@@ -36,9 +36,24 @@
 // LowLevelAlloc.
 #ifdef ABSL_LOW_LEVEL_ALLOC_MISSING
 #error ABSL_LOW_LEVEL_ALLOC_MISSING cannot be directly set
-#elif !defined(ABSL_HAVE_MMAP) && !defined(_WIN32)
+#elif !defined(ABSL_HAVE_MMAP) && !defined(_WIN32) && !defined(__vita__)
 #define ABSL_LOW_LEVEL_ALLOC_MISSING 1
 #endif
+
+// __vita__ is excluded above rather than added to ABSL_HAVE_MMAP, which would
+// have been the shorter edit and a false one: there genuinely is no mmap here.
+//
+// What LowLevelAlloc needs is not mmap specifically but page-granularity
+// allocation that does not go through malloc, for two reasons -- so a malloc
+// hook cannot recurse into it, and so it is async-signal-safe. **Neither
+// applies on this platform.** Nothing in this port hooks malloc, and there are
+// no POSIX signals at all, so the guarantee is vacuous and memalign is an
+// honest substitute. See the __vita__ branches in low_level_alloc.cc.
+//
+// Without this, abseil compiles low_level_alloc.cc and create_thread_identity.cc
+// to *empty objects* -- nm reports zero defined symbols -- while absl::Mutex
+// goes on referencing them, which is how this arrived: seven undefined symbols
+// and two object files containing nothing.
 
 // Using LowLevelAlloc with kAsyncSignalSafe isn't supported on Windows or
 // asm.js / WebAssembly.

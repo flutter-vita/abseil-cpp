@@ -26,7 +26,11 @@
 
 #include "absl/base/call_once.h"
 #include "absl/base/config.h"
+#if defined(__vita__)
+#include <malloc.h>  // memalign
+#else
 #include "absl/base/internal/direct_mmap.h"
+#endif
 #include "absl/base/internal/scheduling_mode.h"
 #include "absl/base/macros.h"
 #include "absl/base/thread_annotations.h"
@@ -39,7 +43,9 @@
 #ifndef _WIN32
 #include <pthread.h>
 #include <signal.h>
+#if !defined(__vita__)
 #include <sys/mman.h>
+#endif
 #include <unistd.h>
 #else
 #include <windows.h>
@@ -436,7 +442,14 @@ bool LowLevelAlloc::DeleteArena(Arena *arena) {
     ABSL_RAW_CHECK(munmap_result != 0,
                    "LowLevelAlloc::DeleteArena: VitualFree failed");
 #else
-#ifndef ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING
+#if defined(__vita__)
+    // The counterpart of the memalign above. The pointer is the one memalign
+    // returned -- whole regions are allocated and whole regions freed -- so
+    // free() is correct and the size is unused.
+    (void)size;
+    ::free(region);
+    munmap_result = 0;
+#elif !defined(ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING)
     if ((arena->flags & LowLevelAlloc::kAsyncSignalSafe) == 0) {
       munmap_result = munmap(region, size);
     } else {
@@ -444,7 +457,7 @@ bool LowLevelAlloc::DeleteArena(Arena *arena) {
     }
 #else
     munmap_result = munmap(region, size);
-#endif  // ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING
+#endif  // defined(__vita__)
     if (munmap_result != 0) {
       ABSL_RAW_LOG(FATAL, "LowLevelAlloc::DeleteArena: munmap failed: %d",
                    errno);
@@ -583,6 +596,25 @@ static void *DoAllocWithArena(size_t request, LowLevelAlloc::Arena *arena) {
                                MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
       ABSL_RAW_CHECK(new_pages != nullptr, "VirtualAlloc failed");
 #else
+#if defined(__vita__)
+      // Page-aligned so the arithmetic below, which assumes whole pages,
+      // continues to hold. memalign rather than mmap; see low_level_alloc.h.
+      new_pages = memalign(arena->pagesize, new_pages_size);
+      if (new_pages == nullptr) {
+        ABSL_RAW_LOG(FATAL, "memalign error: %d", errno);
+      }
+      // **Zero it.** This is not tidiness, it is the whole difference between
+      // mmap and memalign: MAP_ANONYMOUS pages arrive zero-filled and heap
+      // memory arrives holding whatever was there before. Abseil's callers --
+      // CreateThreadIdentity in particular -- take fresh arena memory and use
+      // fields without initialising every one, which is correct against mmap
+      // and silently wrong here.
+      //
+      // The symptom was a data abort in pte_osAtomicExchange with a pointer of
+      // 0x6f742d65, which is ASCII: a synchronisation object holding recycled
+      // string data. Missing this cost a device round trip.
+      memset(new_pages, 0, new_pages_size);
+#else
 #ifndef ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING
       if ((arena->flags & LowLevelAlloc::kAsyncSignalSafe) != 0) {
         new_pages = base_internal::DirectMmap(nullptr, new_pages_size,
@@ -598,6 +630,7 @@ static void *DoAllocWithArena(size_t request, LowLevelAlloc::Arena *arena) {
       if (new_pages == MAP_FAILED) {
         ABSL_RAW_LOG(FATAL, "mmap error: %d", errno);
       }
+#endif  // defined(__vita__)
 
 #ifdef __linux__
 #if defined(PR_SET_VMA) && defined(PR_SET_VMA_ANON_NAME)

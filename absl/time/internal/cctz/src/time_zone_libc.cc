@@ -61,8 +61,15 @@ auto tm_zone(const std::tm& tm) -> decltype(tzname[0]) {
   return tzname[is_dst];
 }
 #elif defined(__native_client__) || defined(__myriad2__) || \
-    defined(__EMSCRIPTEN__)
+    defined(__EMSCRIPTEN__) || defined(__vita__)
 // Uses the globals: '_timezone' and 'tzname'.
+//
+// The Vita belongs in this branch and not the default one below: newlib only
+// gives struct tm the tm_gmtoff and tm_zone extension fields when __TM_GMTOFF
+// and __TM_ZONE are defined, and VitaSDK's build defines neither. It does
+// export _timezone and _tzname, which is exactly what this branch wants. The
+// DST offset is therefore assumed to be one hour, as it is for the platforms
+// already listed here.
 auto tm_gmtoff(const std::tm& tm) -> decltype(_timezone + 0) {
   const bool is_dst = tm.tm_isdst > 0;
   return _timezone + (is_dst ? 60 * 60 : 0);

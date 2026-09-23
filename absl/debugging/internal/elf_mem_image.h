@@ -32,10 +32,14 @@
 #error ABSL_HAVE_ELF_MEM_IMAGE cannot be directly set
 #endif
 
+// __vita__ is in this exclusion list for the reason the comment above gives:
+// the file needs glibc's ELF symbol extensions. VitaSDK's newlib has no
+// <link.h> and no dl_iterate_phdr, and homebrew binaries are statically linked
+// with nothing to introspect anyway.
 #if defined(__ELF__) && !defined(__OpenBSD__) && !defined(__QNX__) &&    \
     !defined(__asmjs__) && !defined(__wasm__) && !defined(__HAIKU__) &&  \
     !defined(__sun) && !defined(__VXWORKS__) && !defined(__hexagon__) && \
-    !defined(__XTENSA__)
+    !defined(__XTENSA__) && !defined(__vita__)
 #define ABSL_HAVE_ELF_MEM_IMAGE 1
 #endif
 
